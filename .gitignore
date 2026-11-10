@@ -1,0 +1,11 @@
+.DS_Store
+/.wiki/
+/raw/
+/extracted/
+/wiki/
+/index.md
+/log.md
+node_modules/
+dist/
+*.tgz
+/deploy/.env

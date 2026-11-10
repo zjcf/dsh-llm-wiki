@@ -1,0 +1,60 @@
+{
+  "name": "dsh-llm-wiki",
+  "version": "0.12.4",
+  "description": "在 DeepSeek Harness 中管理和查询有原文证据的知识库",
+  "type": "module",
+  "files": [
+    "dist",
+    "dsh.patch.yml",
+    "deploy/README.md",
+    "deploy/compose.yaml",
+    "deploy/Dockerfile",
+    "deploy/.dockerignore"
+  ],
+  "exports": {
+    ".": "./dist/dsh.js",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-llm-wiki": "./dist/cli.js"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    },
+    "bundle": {
+      "patch": "./dsh.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.5",
+    "docx-preview": "^0.4.1",
+    "fast-xml-parser": "^5.7.0",
+    "fflate": "^0.8.2",
+    "isomorphic-git": "^1.44.11",
+    "node-diff3": "^3.2.1",
+    "parse5": "^8.0.0",
+    "unpdf": "^1.6.0",
+    "yaml": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.3"
+  }
+}

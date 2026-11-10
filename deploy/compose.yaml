@@ -1,0 +1,62 @@
+name: llm-wiki
+
+x-runtime: &runtime
+  image: dsh-llm-wiki-runtime:node24.13.0-pnpm11.28.5
+  build:
+    context: .
+    dockerfile: Dockerfile
+  working_dir: /root/workspace/deepseek-harness
+  init: true
+  network_mode: host
+  restart: unless-stopped
+  environment:
+    DSH_HOME: /root/.dsh
+    TZ: Asia/Shanghai
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  healthcheck: &healthcheck
+    test: [CMD, node, -e, "fetch('http://${DSH_BIND_IP:-127.0.0.1}:3080/').then(r=>process.exit([200,401].includes(r.status)?0:1)).catch(()=>process.exit(1))"]
+    interval: 15s
+    timeout: 5s
+    start_period: 60s
+    retries: 5
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: '3'}
+
+services:
+  admin:
+    <<: *runtime
+    command: [node, --import, tsx/esm, apps/cli/src/bin.ts, web, --host, '${DSH_BIND_IP:-127.0.0.1}', --port, '3080', --trusted-host, '${DSH_BIND_IP:-127.0.0.1}:3080']
+    volumes:
+      - type: bind
+        source: ${DSH_SOURCE:?Set DSH_SOURCE to the DSH source directory}
+        target: /root/workspace/deepseek-harness
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${DSH_ADMIN_HOME:?Set DSH_ADMIN_HOME to the admin data directory}
+        target: /root/.dsh
+        bind: {create_host_path: false}
+
+  reader:
+    <<: *runtime
+    command: [node, --import, tsx/esm, apps/cli/src/bin.ts, web, --host, '${DSH_BIND_IP:-127.0.0.1}', --port, '3081', --trusted-host, '${DSH_BIND_IP:-127.0.0.1}:3081']
+    healthcheck:
+      <<: *healthcheck
+      test: [CMD, node, -e, "fetch('http://${DSH_BIND_IP:-127.0.0.1}:3081/').then(r=>process.exit([200,401].includes(r.status)?0:1)).catch(()=>process.exit(1))"]
+    volumes:
+      - type: bind
+        source: ${DSH_SOURCE:?Set DSH_SOURCE to the DSH source directory}
+        target: /root/workspace/deepseek-harness
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${DSH_READER_HOME:?Set DSH_READER_HOME to the reader data directory}
+        target: /root/.dsh
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${DSH_WIKI_ROOT:?Set DSH_WIKI_ROOT to the shared wiki directory}
+        target: /root/.dsh/llm-wiki
+        read_only: true
+        bind: {create_host_path: false}

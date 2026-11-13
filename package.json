@@ -1,6 +1,6 @@
 {
   "name": "dsh-llm-wiki",
-  "version": "0.12.4",
+  "version": "0.13.0",
   "description": "在 DeepSeek Harness 中管理和查询有原文证据的知识库",
   "type": "module",
   "files": [

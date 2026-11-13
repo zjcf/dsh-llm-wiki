@@ -9,7 +9,7 @@ LLM Wiki 是面向 DeepSeek Harness（DSH）的知识库插件，npm 包名为 `
 插件不绑定组织 scope 或私有 registry，使用安装端配置的 npm 源。包发布到所选源后，可通过包名安装：
 
 ```bash
-dsh plugin --profile web add dsh-llm-wiki@0.12.4 --save-exact
+dsh plugin --profile web add dsh-llm-wiki@0.13.0 --save-exact
 ```
 
 也可在 DSH「添加插件」中填写包名 `dsh-llm-wiki`，选择实际发布该包的安装源。尚未发布时，可在源码目录执行 `npm pack` 构建 tarball，再通过本地 tarball 安装。

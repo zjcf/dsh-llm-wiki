@@ -16,7 +16,15 @@ export class Catalog {
   constructor(private root: string, private cacheDir?: string) {}
   private request<T>(op: string, options: unknown = {}): Promise<T> {
     if (!this.worker) {
-      const worker = this.worker = new Worker(new URL('./catalog-worker.js', import.meta.url), { workerData: { root: this.root, cacheDir: this.cacheDir }, execArgv: process.execArgv.filter(arg => !arg.startsWith('--input-type')) });
+      const spawn = (execArgv: string[]) => new Worker(new URL('./catalog-worker.js', import.meta.url), { workerData: { root: this.root, cacheDir: this.cacheDir }, execArgv });
+      let created: Worker;
+      try { created = spawn(process.execArgv.filter(arg => !arg.startsWith('--input-type'))); }
+      catch (error) {
+        // Node 26 测试运行器等场景会在 execArgv 中放入 Worker 不接受的进程级参数；索引 Worker 不依赖这些参数。
+        if ((error as NodeJS.ErrnoException).code !== 'ERR_WORKER_INVALID_EXEC_ARGV') throw error;
+        created = spawn([]);
+      }
+      const worker = this.worker = created;
       worker.on('message', ({ id, value, error, progress }) => {
         if (progress) { this.progress = progress; return; }
         const pending = this.pending.get(id); this.pending.delete(id);

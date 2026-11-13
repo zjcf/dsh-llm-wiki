@@ -302,7 +302,7 @@ export class History {
       else await rm(await this.safePath(change.path));
     }
     const log = (await this.optional('log.md')) ?? '# 整理日志\n';
-    await this.atomic('log.md', log.trimEnd() + '\n\n- ' + new Date().toISOString() + ' 管理页 revert ' + oid + '；保留此前历史\n');
+    await this.atomic('log.md', log.trimEnd() + '\n\n## [' + new Date().toISOString() + '] revert | ' + oid + '\n\n管理页 revert；保留此前历史\n');
     return { reverted: oid, commits: plan.commits, files: plan.files };
   }
   async externalPreview() {

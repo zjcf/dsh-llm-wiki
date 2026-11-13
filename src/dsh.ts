@@ -177,9 +177,10 @@ export async function apply(ctx: Host, config: { root?: string; autoReview?: boo
     return { id: source.id, state: source.review_job, ...(source.review_job === 'running' && source.review_session_id ? { sessionId: source.review_session_id } : {}) };
   });
 
-  tool('wiki_write_page', '用户要求新增或整体修改知识时使用：保存主题、实体或 QA，维护索引、日志和 Git 提交。先检索避免重复；更新须先读页面并传 expected_revision。source_ids 传实际依据；管理员通过对话录入的知识也可信，可省略且无需创建来源文件，basis: conversation 仅记录录入方式。保留用户给出的范围和不确定性，不补写未提供的事实，不因没有附件添加待核实或免责声明。问答正文包含问题和回答。自动整理时必须引用分配的来源。' + knowledgeIntakeGuide, {
+  tool('wiki_write_page', '用户要求新增或整体修改知识时使用：保存主题、实体或 QA，维护索引、日志和 Git 提交。先检索避免重复；更新须先读页面并传 expected_revision。source_ids 传实际依据；管理员通过对话录入的知识也可信，可省略且无需创建来源文件，basis: conversation 仅记录录入方式。保留用户给出的范围和不确定性，不补写未提供的事实，不因没有附件添加待核实或免责声明。问答正文包含问题和回答。正文用 [标题](wiki/topics/xxx.md) 形式链接确实相关的已有知识页（使用 wiki_search/wiki_list 返回的 ID），插件转换为相对路径并校验存在；新内容与已有知识矛盾时写明差异及各自依据，不静默覆盖。自动整理时必须引用分配的来源。' + knowledgeIntakeGuide, {
     id: string('可选，已有知识页 ID；新页省略时按标题生成稳定路径'),
     type: { type: 'string', enum: ['topic', 'entity', 'answer'] }, title: string('知识标题'), body: string('Markdown 正文，不添加无关审计报告'),
+    summary: string('一句话说明本页内容（最多 200 字），显示在 index.md 目录；更新时省略则保留原摘要'),
     source_ids: sourceIds, expected_revision: string('更新已有页时填写 wiki_read_page 返回的 revision'),
   }, ['type', 'title', 'body'], async (input: PageWrite, caller) => {
     if (autoReview?.sourceFor(caller?.agent?.id)) { knowledgeWrite(input.source_ids, caller); return autoReview!.draftFor(caller?.agent?.id)!.writePage(input); }
@@ -258,6 +259,7 @@ export async function apply(ctx: Host, config: { root?: string; autoReview?: boo
 
   tool('wiki_record_review', '核对材料后保存一个来源页、索引和日志。遵守 wiki_get_source 的 reviewGuide 长度上限：短材料只保留实际要点/步骤，不套报告模板或扩写常识。长材料按实际章节整理；相关图片嵌在解释它的正文附近，系统不会自动追加图片。缺口用一句必要说明，阅读不全选 partial。', {
     id: string('来源 ID'), title: string('材料标题'), body: string('Markdown 整理正文，含关键结论、证据位置和限制'),
+    summary: string('一句话说明材料内容（最多 200 字），显示在 index.md 目录'),
     status: { type: 'string', enum: ['partial', 'processed'] },
   }, ['id', 'title', 'body', 'status'], async (review: Review, caller) => {
     const automated = autoSource(review.id, caller);

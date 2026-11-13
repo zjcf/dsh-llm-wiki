@@ -17,7 +17,7 @@ export class ReviewDraft {
 
   async writePage(input: PageWrite) {
     const id = knowledgePath(input);
-    const prepared = await this.wiki.prepareKnowledge({ ...input, id }, this.sessionId, this.overlay.get(id));
+    const prepared = await this.wiki.prepareKnowledge({ ...input, id }, this.sessionId, this.overlay.get(id), this.overlay);
     const previous = this.pages.get(id);
     this.pages.set(id, { ...input, id, expected_revision: previous ? previous.expected_revision : prepared.previousRevision });
     this.overlay.set(id, prepared.content);

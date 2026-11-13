@@ -3,7 +3,7 @@ import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile,
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { extract, type Extraction } from './extract.js';
-import { flagForReview, pruneReferences, reviewNotice } from './references.js';
+import { flagForReview, pruneReferences, referenceTargets, reviewNotice } from './references.js';
 import { imageType } from './images.js';
 import { contentLength, readLines, reviewGuide, withoutGallery } from './reading.js';
 import { History, HistoryError, type ChangeMeta } from './history.js';
@@ -15,6 +15,26 @@ export const MAX_UPLOAD = 25 * 1024 * 1024;
 const sourceId = /^s-[0-9a-f]{16}$/;
 const sha = (data: Uint8Array) => createHash('sha256').update(data).digest('hex');
 const date = () => new Date().toISOString();
+const oneLine = (text: string) => text.replace(/[\r\n]+/g, ' ').trim();
+/** log.md 条目使用统一前缀，便于 grep "^## \[" 按日期或操作过滤。 */
+const logEntry = (op: string, subject: string, detail = '') => '\n\n## [' + date() + '] ' + op + ' | ' + oneLine(subject) + (detail ? '\n\n' + detail : '') + '\n';
+const indexSections = { source: '来源与原文', topic: '主题知识', entity: '实体知识', answer: 'QA 问答' } as const;
+const legacyIndexEntry = /^- \[[^\n]*\]\([^)\n]+\) · (来源摘要|主题知识|实体知识|QA 问答)$/gm;
+
+/** 移除旧条目后，把条目追加到 index.md 对应分节末尾；分节不存在时在文末创建。 */
+function placeIndexEntry(index: string, section: string, entry: string, links: string[]) {
+  const lines = index.trimEnd().split('\n').filter(line => !links.some(link => line.includes('](' + link + ')')));
+  let at = lines.findIndex(line => line.trim() === '## ' + section);
+  if (at < 0) { lines.push('', '## ' + section); at = lines.length - 1; }
+  let end = at + 1;
+  while (end < lines.length && !/^#{1,2} /.test(lines[end])) end++;
+  while (end > at + 1 && !lines[end - 1].trim()) end--;
+  const insert = end === at + 1 ? ['', entry] : [entry];
+  if (end < lines.length && lines[end].trim()) insert.push('');
+  lines.splice(end, 0, ...insert);
+  // 移除旧条目会留下多余空行，合并为单个空行（Markdown 渲染不变）。
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n') + '\n';
+}
 export type Status = 'pending' | 'partial' | 'processed';
 type ReviewJob = 'queued' | 'running' | 'failed' | 'manual';
 export interface Source {
@@ -34,7 +54,7 @@ export interface Page {
   revision: string; sourceIds: string[]; basis?: string;
 }
 export interface PageWrite {
-  id?: string; type: 'topic' | 'entity' | 'answer'; title: string; body: string;
+  id?: string; type: 'topic' | 'entity' | 'answer'; title: string; body: string; summary?: string;
   source_ids?: string[]; expected_revision?: string;
 }
 export interface Rebuild {
@@ -43,7 +63,7 @@ export interface Rebuild {
 }
 export type RebuildResult = { body: string; source_ids: string[] } | { omit_reason: string };
 export interface Review {
-  id: string; title: string; body: string; status: 'partial' | 'processed';
+  id: string; title: string; body: string; status: 'partial' | 'processed'; summary?: string;
 }
 type Manifest = { version: 1; sources: Record<string, Source>; rebuilds?: Record<string, Rebuild> };
 const notFound = (e: unknown) => (e as NodeJS.ErrnoException).code === 'ENOENT';
@@ -136,6 +156,18 @@ export class Wiki {
       await this.write(async () => {
         if (isLegacyGuide(await readFile(await this.path('AGENTS.md'), 'utf8'))) await this.atomic('AGENTS.md', workspaceGuide);
       }, { kind: 'maintenance', subject: 'AGENTS.md', title: '升级知识维护工具指引' });
+    }
+    // 旧版目录把所有知识平铺在「来源与原文」下，按条目后缀迁移到对应分节，保留其余手写内容。
+    if (new RegExp(legacyIndexEntry.source, 'm').test(await readFile(await this.path('index.md'), 'utf8'))) {
+      await this.write(async () => {
+        const kinds: Record<string, string> = { 来源摘要: indexSections.source, 主题知识: indexSections.topic, 实体知识: indexSections.entity, 'QA 问答': indexSections.answer };
+        let index = await readFile(await this.path('index.md'), 'utf8');
+        for (const [line, kind] of [...index.matchAll(legacyIndexEntry)]) {
+          const entry = line.slice(0, -(' · ' + kind).length);
+          index = placeIndexEntry(index, kinds[kind], entry, [/\]\(([^)\n]+)\)$/.exec(entry)![1]]);
+        }
+        await this.atomic('index.md', index);
+      }, { kind: 'maintenance', subject: 'index.md', title: '按类别整理知识目录' });
     }
   }
 
@@ -327,8 +359,7 @@ export class Wiki {
       if (!Object.keys(data.rebuilds!).length) delete data.rebuilds;
       await this.save(data);
       const log = await readFile(await this.path('log.md'), 'utf8');
-      await this.atomic('log.md', log.trimEnd() + '\n\n- ' + date() + (omitted ? ' 剩余来源不足以重建，保持删除：' : ' 基于剩余来源重建知识：') + id
-        + (omitted ? '；原因：' + result.omit_reason.replace(/[\r\n]/g, ' ').slice(0, 1000) : '') + '\n');
+      await this.atomic('log.md', log.trimEnd() + logEntry('rebuild', id, omitted ? '剩余来源不足以重建，保持删除；原因：' + oneLine(result.omit_reason).slice(0, 1000) : '基于剩余来源重建知识'));
     }, meta);
   }
 
@@ -429,7 +460,7 @@ export class Wiki {
       await this.saveExtraction(record, await extract(record.name, bytes));
       data.sources[id] = record;
       const log = await readFile(await this.path('log.md'), 'utf8');
-      await this.atomic('log.md', log.trimEnd() + '\n\n- ' + date() + ' ' + id + ' Node 重新抽取文本及图片 ' + (record.images?.length ?? 0) + ' 张；原件未变更。\n');
+      await this.atomic('log.md', log.trimEnd() + logEntry('extract', id, 'Node 重新抽取文本及图片 ' + (record.images?.length ?? 0) + ' 张；原件未变更。'));
       await this.save(data);
       return { id, images: record.images?.length ?? 0 };
     }, { kind: 'extract', subject: id });
@@ -562,12 +593,14 @@ export class Wiki {
 
   async writePage(input: PageWrite, sessionId?: string) {
     const meta: ChangeMeta = { kind: 'knowledge', session: sessionId };
-    return this.write(async () => { const result = await this.saveKnowledge(input, sessionId); meta.subject = result.id; return result; }, meta);
+    return this.write(async () => { const result = await this.saveKnowledge(input, sessionId, new Map()); meta.subject = result.id; return result; }, meta);
   }
 
-  async prepareKnowledge(input: PageWrite, sessionId?: string, stagedPrevious?: string) {
+  /** 提供 staged 时校验正文新增的知识页链接存在（磁盘或同批草稿），便于写入时立即纠正。 */
+  async prepareKnowledge(input: PageWrite, sessionId?: string, stagedPrevious?: string, staged?: ReadonlyMap<string, string>) {
     const folder = { topic: 'topics', entity: 'entities', answer: 'answers' }[input.type];
     if (!folder || !input.title.trim() || input.title.length > 200 || !input.body.trim() || input.body.length > 60000) throw new WikiError('请提供有效的类型、标题和正文（最多 60000 字）');
+    if (input.summary !== undefined && (typeof input.summary !== 'string' || input.summary.length > 200)) throw new WikiError('summary 须为一句话（最多 200 字）');
     const id = knowledgePath(input);
     if (!new RegExp('^wiki/' + folder + '/[^/]+\\.md$').test(id)) throw new WikiError('知识页路径与类型不匹配；来源页请使用 wiki_record_review');
     const path = await this.path(id);
@@ -580,7 +613,20 @@ export class Wiki {
     const sourceIds = [...new Set(input.source_ids ?? [])].sort();
     if (sourceIds.length > 30) throw new WikiError('一页最多关联 30 个来源');
     for (const source of sourceIds) await this.record(source);
-    let body = input.body.trim();
+    // 正文中按知识页 ID 书写的链接（wiki/topics/x.md）转换为相对当前页的路径。
+    let body = input.body.trim().replace(/\]\(<?(wiki\/(?:sources|topics|entities|answers)\/[^)>\n]+?\.md)(#[^)>\s]*)?>?\)/g, (_match, target: string, anchor = '') => {
+      let path = target;
+      try { path = decodeURIComponent(target); } catch { /* 保留原样 */ }
+      return '](' + relative(dirname(id), path).split(sep).map(encodeURIComponent).join('/') + anchor + ')';
+    });
+    if (staged) {
+      const before = new Set(referenceTargets(id, previous));
+      for (const target of referenceTargets(id, body)) {
+        if (target === id || before.has(target) || !/^wiki\/.+\.md$/.test(target) || staged.has(target)) continue;
+        try { await lstat(await this.path(target)); }
+        catch { throw new WikiError('链接的知识页不存在：' + target + '。请使用 wiki_search/wiki_list 返回的 ID，或移除该链接', 409); }
+      }
+    }
     for (const sourceId of sourceIds) {
       const source = await this.record(sourceId);
       const target = source.summary || source.original;
@@ -589,19 +635,20 @@ export class Wiki {
       body += '\n\n[来源：' + source.name.replace(/[\[\]\r\n]/g, ' ') + '](' + href + ')';
     }
     const existingIds = Array.isArray(prior.meta.source_ids) ? [...prior.meta.source_ids].sort() : [];
+    const summary = input.summary !== undefined ? oneLine(input.summary) : typeof prior.meta.summary === 'string' ? prior.meta.summary : '';
     const unchanged = !!previous && prior.meta.title === input.title && prior.meta.type === input.type && prior.body.trim() === body
-      && JSON.stringify(existingIds) === JSON.stringify(sourceIds);
+      && JSON.stringify(existingIds) === JSON.stringify(sourceIds) && (prior.meta.summary ?? '') === summary;
     if (!unchanged && previous && input.expected_revision !== sha(Buffer.from(previous))) throw new WikiError('知识页已存在或已变化，请先 wiki_read_page 获取 revision 后再更新', 409);
     if (!previous && input.expected_revision) throw new WikiError('知识页不存在，无法按旧版本更新', 409);
     const today = date().slice(0, 10);
-    const meta = { type: input.type, title: input.title, created: prior.meta.created ?? today, updated: today, tags: prior.meta.tags ?? [],
+    const meta = { type: input.type, title: input.title, ...(summary ? { summary } : {}), created: prior.meta.created ?? today, updated: today, tags: prior.meta.tags ?? [],
       source_ids: sourceIds, basis: sourceIds.length ? 'sources' : 'conversation', ...(sessionId ? { origin_session: sessionId } : {}) };
     const content = '---\n' + Object.entries(meta).map(([key, value]) => key + ': ' + JSON.stringify(value)).join('\n') + '\n---\n\n' + body + '\n';
     return { id, content: unchanged ? previous : content, previousRevision: previous ? sha(Buffer.from(previous)) : undefined, unchanged, meta };
   }
 
-  private async saveKnowledge(input: PageWrite, sessionId?: string) {
-    const prepared = await this.prepareKnowledge(input, sessionId);
+  private async saveKnowledge(input: PageWrite, sessionId?: string, staged?: ReadonlyMap<string, string>) {
+    const prepared = await this.prepareKnowledge(input, sessionId, undefined, staged);
     const { id, content, meta, unchanged } = prepared;
     const sourceIds = meta.source_ids;
     const rebuild = (await this.readManifest()).rebuilds?.[id];
@@ -609,15 +656,12 @@ export class Wiki {
     if (unchanged) return { id, revision: sha(Buffer.from(content)), unchanged: true };
     const previous = prepared.previousRevision;
     await this.atomic(id, content);
-    let index = await readFile(await this.path('index.md'), 'utf8');
+    const index = await readFile(await this.path('index.md'), 'utf8');
     const link = id.split('/').map(encodeURIComponent).join('/');
-    const entry = '- [' + input.title.replace(/[\[\]\r\n]/g, ' ') + '](' + link + ') · ' + ({ topic: '主题知识', entity: '实体知识', answer: 'QA 问答' }[input.type]);
-    const lines = index.split('\n').filter(line => !line.includes('](' + id + ')') && !line.includes('](' + link + ')'));
-    index = lines.join('\n').trimEnd() + '\n\n' + entry + '\n';
-    await this.atomic('index.md', index);
+    const entry = '- [' + input.title.replace(/[\[\]\r\n]/g, ' ') + '](' + link + ')' + (meta.summary ? ' — ' + meta.summary : '');
+    await this.atomic('index.md', placeIndexEntry(index, indexSections[input.type], entry, [id, link]));
     const log = await readFile(await this.path('log.md'), 'utf8');
-    await this.atomic('log.md', log.trimEnd() + '\n\n- ' + date() + ' ' + (previous ? '更新' : '新增') + '知识页 ' + id
-      + '；依据：' + (sourceIds.join('、') || '当前对话，未核对独立来源') + '\n');
+    await this.atomic('log.md', log.trimEnd() + logEntry('page', id, (previous ? '更新' : '新增') + '知识页；依据：' + (sourceIds.join('、') || '当前对话，未核对独立来源')));
     return { id, revision: sha(Buffer.from(content)), unchanged: false, basis: meta.basis };
   }
 
@@ -678,7 +722,7 @@ export class Wiki {
       for (const change of plan.changes) await this.atomic(change.path, change.after);
       await rm(await this.path(id));
       const log = await readFile(await this.path('log.md'), 'utf8');
-      await this.atomic('log.md', log.trimEnd() + '\n\n- ' + date() + ' 删除知识页 ' + id + '；移除引用：' + plan.affected.join('、') + '\n');
+      await this.atomic('log.md', log.trimEnd() + logEntry('delete', id, '删除知识页；移除引用：' + (plan.affected.join('、') || '无')));
       return { id, affected: plan.affected, deleted: true };
     }, { kind: 'delete-page', subject: id });
   }
@@ -761,8 +805,8 @@ export class Wiki {
       for (const path of plan.removed) if (data.rebuilds) delete data.rebuilds[path];
       for (const job of plan.rebuilds) (data.rebuilds ??= {})[job.id] = job;
       if (data.rebuilds && !Object.keys(data.rebuilds).length) delete data.rebuilds;
-      await this.atomic('log.md', log.trimEnd() + '\n\n- ' + date() + ' 删除当前来源（保留版本历史） ' + id
-        + '；关联删除知识：' + (plan.removed.join('、') || '无') + '；按剩余来源重整：' + (plan.rebuilds.map(job => job.id).join('、') || '无') + '\n');
+      await this.atomic('log.md', log.trimEnd() + logEntry('delete', id, '删除当前来源（保留版本历史）；关联删除知识：' + (plan.removed.join('、') || '无')
+        + '；按剩余来源重整：' + (plan.rebuilds.map(job => job.id).join('、') || '无')));
       await this.save(data);
       return { id, affected: plan.affected, removed: plan.removed, rebuilds: plan.rebuilds.map(job => job.id) };
     }, { kind: 'delete-source', subject: id });
@@ -812,10 +856,11 @@ export class Wiki {
     return this.write(() => this.saveReview(input, automated), { kind: 'source-review', subject: input.id, session: sessionId });
   }
 
-  async prepareReview({ id, title, body, status }: Review, automated = false) {
+  async prepareReview({ id, title, body, status, summary }: Review, automated = false) {
     if (!title.trim() || title.length > 200 || !body.trim() || body.length > 160_000 || !['processed', 'partial'].includes(status)) {
       throw new WikiError('请填写来源页标题、整理正文和有效状态');
     }
+    if (summary !== undefined && (typeof summary !== 'string' || summary.length > 200)) throw new WikiError('summary 须为一句话（最多 200 字）');
     const record = await this.record(id);
     if (automated && record.review_job !== 'running') {
       throw new WikiError('该来源已由其他整理任务处理', 409);
@@ -831,7 +876,7 @@ export class Wiki {
     let created = today;
     try { created = String(pageParts(await readFile(await this.path(pageId), 'utf8')).meta.created ?? today); }
     catch (e) { if (!notFound(e)) throw e; }
-    const meta = { type: 'source', title, created, updated: today, tags: [], source_id: id, status };
+    const meta = { type: 'source', title, ...(summary?.trim() ? { summary: oneLine(summary) } : {}), created, updated: today, tags: [], source_id: id, status };
     const fields = Object.entries(meta).map(([key, value]) => key + ': ' + JSON.stringify(value)).join('\n');
     const content = '---\n' + fields + '\n---\n\n# ' + title.replace(/[\r\n]/g, ' ') + '\n\n[原文](' + original + ')\n\n' + withoutGallery(body) + '\n';
     return { record, pageId, content, status };
@@ -843,14 +888,10 @@ export class Wiki {
     const data = await this.manifest();
     await this.atomic(pageId, content);
     const index = await readFile(await this.path('index.md'), 'utf8');
-    if (!index.includes('](' + pageId + ')')) {
-      const entry = '- [' + title.replace(/[\[\]\r\n]/g, ' ') + '](' + pageId + ') · 来源摘要\n';
-      const heading = /^## 来源与原文\s*$/m;
-      const next = heading.test(index) ? index.replace(/^## 来源与原文[ \t]*$/m, match => match + '\n\n' + entry.trimEnd()) : index.trimEnd() + '\n\n## 来源与原文\n\n' + entry;
-      await this.atomic('index.md', next);
-    }
+    const summary = input.summary?.trim() ? ' — ' + oneLine(input.summary) : '';
+    await this.atomic('index.md', placeIndexEntry(index, indexSections.source, '- [' + title.replace(/[\[\]\r\n]/g, ' ') + '](' + pageId + ')' + summary, [pageId]));
     const log = await readFile(await this.path('log.md'), 'utf8');
-    await this.atomic('log.md', log.trimEnd() + '\n\n- ' + date() + ' ' + id + ' ' + status + ' ' + pageId + '\n');
+    await this.atomic('log.md', log.trimEnd() + logEntry('ingest', title, id + ' ' + status + ' ' + pageId));
     data.sources[id] = { ...record, status, summary: pageId, reviewed_at: date() };
     if (!automated) {
       delete data.sources[id].review_job;
@@ -868,6 +909,7 @@ export class Wiki {
     const errors: string[] = [];
     const warnings: string[] = [];
     const index = await readFile(await this.path('index.md'), 'utf8');
+    const linked = new Set<string>();
     for (const source of sources) {
       if (selected && (!source.summary || !selected.has(source.summary))) continue;
       try {
@@ -887,6 +929,7 @@ export class Wiki {
     for (const id of pages) {
       try {
         const { meta, body } = pageParts(await readFile(await this.path(id), 'utf8'));
+        for (const target of referenceTargets(id, body)) if (target !== id) linked.add(target);
         if (!index.includes('](' + id + ')') && !index.includes('](' + id.split('/').map(encodeURIComponent).join('/') + ')')) errors.push('目录未覆盖：' + id);
         if (Array.isArray(meta.source_ids) && meta.source_ids.some(value => !registered.has(String(value)))) errors.push('登记的引用来源不存在：' + id);
         if (!meta.title || !meta.type || !meta.created || !meta.updated || !Array.isArray(meta.tags)) errors.push('知识页元数据不完整：' + id);
@@ -901,6 +944,11 @@ export class Wiki {
           } catch { errors.push('失效或越界链接：' + id + ' → ' + match[1]); }
         }
       } catch { errors.push('无法读取知识页：' + id); }
+    }
+    if (!only) {
+      // 目录链接不算：孤立页指没有任何其他知识页或来源页链接到它，通常意味着缺少交叉引用。
+      const orphans = pages.filter(id => !id.startsWith('wiki/sources/') && !linked.has(id));
+      if (orphans.length) warnings.push('孤立知识页 ' + orphans.length + ' 个（没有其他页面链接）：' + orphans.slice(0, 20).join('、') + (orphans.length > 20 ? ' 等' : ''));
     }
     return { sources: sources.length, pages: pages.length, errors, warnings };
   }

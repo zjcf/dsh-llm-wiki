@@ -260,11 +260,23 @@ function deletion(options: any) {
     .all(...options.prefixes.flatMap((prefix: string) => [prefix, prefix])).map(row => String(row.page_id));
   return { removed, references, revision };
 }
+/** 结构体检：基于已索引的引用图，不在主线程扫描正文。目录链接不计入孤立页判断。 */
+function lint(options: any) {
+  const limit = bounded(options.limit, 50, 200);
+  const slice = <T>(rows: T[]) => ({ total: rows.length, items: rows.slice(0, limit) });
+  const knowledge = "docs.kind='page' AND docs.id NOT LIKE 'wiki/sources/%'";
+  const orphans = db.prepare(`SELECT id,title,type FROM docs WHERE ${knowledge} AND NOT EXISTS (SELECT 1 FROM refs JOIN docs AS other ON other.id=refs.page_id WHERE refs.target=docs.id AND refs.page_id<>docs.id AND other.kind='page') ORDER BY id`).all();
+  const unindexed = db.prepare("SELECT id,title,type FROM docs WHERE kind='page' AND NOT EXISTS (SELECT 1 FROM refs WHERE refs.page_id='index.md' AND refs.target=docs.id) ORDER BY id").all();
+  const broken = db.prepare("SELECT refs.page_id AS page,refs.target AS target FROM refs JOIN docs ON docs.id=refs.page_id WHERE docs.kind='page' AND refs.target NOT IN (SELECT id FROM docs) ORDER BY refs.page_id,refs.target").all()
+    .filter(row => { try { return !existsSync(safe(String(row.target))); } catch { return true; } });
+  const unreviewed = db.prepare("SELECT id,name,status FROM sources WHERE status<>'processed' ORDER BY id").all();
+  return { orphans: slice(orphans), unindexed: slice(unindexed), brokenLinks: slice(broken), unreviewed: slice(unreviewed) };
+}
 parentPort!.on('message', message => {
   queue = queue.then(async () => {
     try {
       if (message.op !== 'metrics') await refresh(message.op === 'refresh', message.op === 'deletion' && message.options.allowTransaction, message.op === 'list' && message.options.view !== 'pages' && !message.options.query);
-      const value = message.op === 'search' ? search(message.options) : message.op === 'list' ? list(message.options) : message.op === 'deletion' ? deletion(message.options) : message.op === 'metrics' ? { scans, reads } : undefined;
+      const value = message.op === 'search' ? search(message.options) : message.op === 'list' ? list(message.options) : message.op === 'deletion' ? deletion(message.options) : message.op === 'lint' ? lint(message.options) : message.op === 'metrics' ? { scans, reads } : undefined;
       parentPort!.postMessage({ id: message.id, value });
     } catch (error) { progress(false); parentPort!.postMessage({ id: message.id, error: error instanceof Error ? error.message : '知识索引失败' }); }
   });

@@ -115,6 +115,7 @@ export class Wiki {
   assertWritable() { if (this.readOnly) throw new WikiError('此实例为只读知识库，请到管理实例操作', 403); }
   listCatalog(options: CatalogOptions = {}) { return this.catalog.list(options); }
   refreshCatalog() { return this.catalog.refresh(); }
+  lint(limit?: number) { return this.catalog.lint(limit); }
   catalogProgress() { return this.catalog.progress; }
   disposeCatalog() { return this.catalog.dispose(); }
 

@@ -40,6 +40,14 @@ test('按知识页 ID 写的链接转为相对路径；不存在的页面拒绝�
   assert.deepEqual(checked.errors, []);
   const orphans = checked.warnings.find(line => line.startsWith('孤立知识页'));
   assert.match(orphans, /孤立知识页 1 个/); assert.match(orphans, /归档流程/); assert.doesNotMatch(orphans, /归档 服务/);
+  // wiki_lint 在索引 Worker 中给出同样的孤立页，并列出目录缺项、失效链接和未整理来源。
+  const { record } = await wiki.import('待整理.md', Buffer.from('尚未整理。'));
+  await writeFile(join(root, 'wiki/topics/手写.md'), '---\ntitle: "手写"\ntype: "topic"\n---\n\n见 [缺失](../answers/缺失.md)。\n');
+  const lint = await wiki.lint(1);
+  assert.equal(lint.orphans.total, 2); assert.equal(lint.orphans.items.length, 1);
+  assert.deepEqual(lint.unindexed.items.map(item => item.id), ['wiki/topics/手写.md']);
+  assert.deepEqual(lint.brokenLinks.items, [{ page: 'wiki/topics/手写.md', target: 'wiki/answers/缺失.md' }]);
+  assert.deepEqual(lint.unreviewed.items.map(item => item.id), [record.id]);
 });
 
 test('旧版平铺目录迁移到对应分节，保留手写内容', async t => {

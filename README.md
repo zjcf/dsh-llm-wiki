@@ -46,9 +46,9 @@ PDF/DOCX 内嵌图片提取到 `extracted/assets/<source_id>/`。提供给 Agent
 - `wiki_update_page`：基于 revision 精确替换一段正文，保留其余内容与来源。
 - `wiki_delete_source`、`wiki_delete_page`：先只传 ID 查看影响，再携带返回的 token 执行；并发变化后拒绝旧 token。来源删除会删除原件和关联知识，多来源页按剩余来源重整；独立知识页删除保留原件。Git 历史保留，版本回滚仍只通过管理页 revert。
 
-查询工具为 `wiki_list`、`wiki_search`、`wiki_read_page`、`wiki_get_source`、`wiki_read_source`、`wiki_read_image`。内部来源登记 `wiki_record_review` 不向普通对话开放；自动整理仍在独立会话中按完整阅读范围生成一个整理提交。
+查询工具为 `wiki_list`、`wiki_search`、`wiki_read_page`、`wiki_get_source`、`wiki_read_source`、`wiki_read_image`，以及结构体检工具 `wiki_lint`（在索引 Worker 中基于引用图列出孤立知识页、目录未收录页、失效链接和未完成整理的来源，每类返回总数和前 `limit` 条，只读）。内部来源登记 `wiki_record_review` 不向普通对话开放；自动整理仍在独立会话中按完整阅读范围生成一个整理提交。
 
-插件配置 `readOnly: true` 时，仅注册上述六个查询工具，拒绝所有管理 POST、删除预览和版本写入，不执行迁移、补抽取、自动整理、恢复任务或 Git 推送。管理页标明只读并隐藏写入按钮。`cacheDir` 指向共享知识库以外的绝对路径，默认 `$DSH_HOME/llm-wiki-cache`；每个实例各自维护派生索引，可读取管理实例发布的新提交。知识库卷须同时以 Docker `read_only: true` 挂载，约束宿主 Shell/文件工具。详见 [双实例部署](deploy/README.md)。
+插件配置 `readOnly: true` 时，仅注册上述七个查询工具，拒绝所有管理 POST、删除预览和版本写入，不执行迁移、补抽取、自动整理、恢复任务或 Git 推送。管理页标明只读并隐藏写入按钮。`cacheDir` 指向共享知识库以外的绝对路径，默认 `$DSH_HOME/llm-wiki-cache`；每个实例各自维护派生索引，可读取管理实例发布的新提交。知识库卷须同时以 Docker `read_only: true` 挂载，约束宿主 Shell/文件工具。详见 [双实例部署](deploy/README.md)。
 
 管理实例仍使用原有导入、删除与版本管理页。插件只迁移自己原样生成的旧工作区指引，保留用户自定义 `AGENTS.md`；所有变更应走工具，不直接改写原件、manifest 和索引。
 
@@ -101,7 +101,7 @@ Git 负责记录、检测与恢复，不判断知识是否正确。数据目录�
 - 查询：在当前会话输入 `/llm-wiki 你的问题`，优先检索本地知识并引用知识页。
 - 查看原文：在「来源材料」列表点击文件预览 PDF/Word，在知识页追溯相关来源。
 - 维护：通过管理页或管理实例的 Agent 工具修改、重整和删除；只读实例只提供查询。版本回滚使用管理页 revert。
-- 体检：输入 `/llm-wiki 体检知识库`，Agent 检查矛盾、过时结论、缺少独立页的概念和缺失的交叉链接，列出问题与建议，确认后才修改。管理页「检查知识库」另外列出孤立知识页（没有其他页面链接）、失效链接和目录缺项。
+- 体检：输入 `/llm-wiki 体检知识库`，Agent 先用 `wiki_lint` 获取孤立知识页（没有其他页面链接）、目录缺项、失效链接和未完成整理的来源，再读取相关页检查矛盾、过时结论、缺少独立页的概念和缺失的交叉链接，列出问题与建议，确认后才修改；只读实例也可体检。管理页「检查知识库」另外校验原件哈希与登记一致性，并列出孤立知识页。
 
 ### 目录、交叉链接与日志
 

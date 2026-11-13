@@ -47,7 +47,7 @@ test('普通 Agent 支持完整知识增删改查；附件限当前对话',async
   await apply(host,{root});
   const caller={agent:{id:'conversation-proof',session:{deriveMessages:()=>[{role:'user',source:{kind:'user'},content:[{type:'file',attachment:ref}]}]}}};
   const call=(name,args,c=caller)=>tools.get(name).execute(args,c);
-  assert.deepEqual([...tools.keys()].sort(),['wiki_list','wiki_import_source','wiki_reorganize_source','wiki_write_page','wiki_update_page','wiki_delete_page','wiki_delete_source','wiki_search','wiki_read_page','wiki_get_source','wiki_read_source','wiki_read_image'].sort());
+  assert.deepEqual([...tools.keys()].sort(),['wiki_list','wiki_import_source','wiki_reorganize_source','wiki_write_page','wiki_update_page','wiki_delete_page','wiki_delete_source','wiki_search','wiki_read_page','wiki_get_source','wiki_read_source','wiki_read_image','wiki_lint'].sort());
   const saved=await call('wiki_write_page',{type:'answer',title:'普通对话 QA',body:'用户确认的操作说明。'});
   const page=await call('wiki_read_page',{id:saved.id});assert.equal(page.basis,'conversation');
   assert.equal(page.answerGuide,knowledgeAnswerGuide);assert.equal(page.needsReview,false);assert.equal((await call('wiki_list',{})).totalSources,0);

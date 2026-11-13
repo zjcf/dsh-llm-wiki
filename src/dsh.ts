@@ -70,7 +70,7 @@ export async function apply(ctx: Host, config: { root?: string; autoReview?: boo
   ctx.effect(() => ctx.connection.fetch.register({ path: API, methods: ['GET', 'HEAD', 'POST'], requestBody: 'buffered', fetch }), 'llm-wiki: authenticated management route');
   ctx.effect(() => ctx.connection.fetch.register({ path: UPLOAD_API, methods: ['POST'], requestBody: 'streaming', fetch }), 'llm-wiki: authenticated upload route');
 
-  const queryTools = new Set(['wiki_list', 'wiki_search', 'wiki_read_page', 'wiki_get_source', 'wiki_read_source', 'wiki_read_image']);
+  const queryTools = new Set(['wiki_list', 'wiki_search', 'wiki_read_page', 'wiki_get_source', 'wiki_read_source', 'wiki_read_image', 'wiki_lint']);
   function tool(name: string, description: string, properties: Record<string, unknown>, required: string[], execute: (input: any, caller?: Caller) => Promise<unknown>, render?: (_input: unknown, result: any) => unknown[], curation: boolean | 'both' = false) {
     if (readOnly && !queryTools.has(name)) return;
     const definition = {
@@ -128,6 +128,10 @@ export async function apply(ctx: Host, config: { root?: string; autoReview?: boo
     return { sources: sources.sources.map(source => ({ id: source.id, name: source.name, status: source.status, summary: source.summary ?? null })),
       pages: pages.pages, totalSources: sources.total, totalPages: pages.total };
   });
+
+  tool('wiki_lint', '用户要求体检或检查知识库时使用，只读。返回孤立知识页（没有其他页面链接）、目录未收录页、失效链接和未完成整理的来源，每类给出总数和前 limit 条。矛盾、过时结论和缺少独立页的概念需再读取相关页判断；不据此自动修改。', {
+    limit: { type: 'integer', minimum: 1, maximum: 200, description: '每类最多返回条数，默认 50' },
+  }, [], async ({ limit }) => wiki.lint(limit));
 
   tool('wiki_import_source', '用户要求收录文件或文字描述时使用。附件传 file（当前对话附件文件名、attachmentId 或附件句柄路径），插件直接归档 PDF/Word 等原文件，不读取转写、不用 Shell/Python/Base64。文字传 content，可用 name 指定 .md/.txt 文件名；只保存用户提供的描述，不扩写事实。file 与 content 二选一。成功后自动整理为来源页及有价值的主题/实体/问答，并保留整理对话。相同材料去重，不重复创建；已整理材料需重做时用 wiki_reorganize_source。', {
     file: string('当前对话中的附件文件名、attachmentId 或附件句柄路径；不能指定其他本机文件或 URL'),

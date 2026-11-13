@@ -31,7 +31,7 @@ test('只读实例不写共享库、不取凭据、不启动 Agent；缓存独�
     tools:{register:tool=>{tools.set(tool.name,tool);return()=>tools.delete(tool.name)}},
     connection:{fetch:{register:route=>{routes.set(route.path,route.fetch);return()=>{}}}}};
   await apply(host,{root,readOnly:true,autoReview:true,cacheDir});t.after(async()=>{for(const f of effects.reverse())await f()});
-  assert.deepEqual([...tools.keys()].sort(),['wiki_list','wiki_search','wiki_read_page','wiki_get_source','wiki_read_source','wiki_read_image'].sort());
+  assert.deepEqual([...tools.keys()].sort(),['wiki_list','wiki_search','wiki_read_page','wiki_get_source','wiki_read_source','wiki_read_image','wiki_lint'].sort());
   const call=(name,args)=>tools.get(name).execute(args);
   assert.equal((await call('wiki_list',{})).totalPages,2);
   assert.match((await call('wiki_read_page',{id:page.id})).text,/保存原件/);

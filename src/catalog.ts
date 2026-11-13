@@ -40,6 +40,7 @@ export class Catalog {
   list(options: CatalogOptions = {}) { return this.request<CatalogList>('list', options); }
   deletion(id: string, targets: string[], prefixes: string[], allowTransaction = false) { return this.request<{ removed: { id: string; title: string; type: string; sourceIds: string[] }[]; references: string[]; revision: string }>('deletion', { id, targets, prefixes, allowTransaction }); }
   search(query: string, scope: string, limit: number, overlay?: Map<string, string>) { return this.request<Slice<SearchHit>>('search', { query, scope, limit, overlay: overlay ? [...overlay] : [] }); }
+  lint(limit?: number) { return this.request<Record<'orphans' | 'unindexed' | 'brokenLinks' | 'unreviewed', { total: number; items: Record<string, string>[] }>>('lint', { limit }); }
   refresh() { return this.request<void>('refresh'); }
   metrics() { return this.request<{ scans: number; reads: number }>('metrics'); }
   async dispose() { const worker = this.worker; this.worker = undefined; if (worker) await worker.terminate(); }
